@@ -6,6 +6,24 @@ html { background:#e9e4db; }
 body { margin:0; color:var(--ink); background:radial-gradient(circle at 15% 0%,#fff8e9 0,transparent 34%),var(--cream); font-family:Arial,Helvetica,sans-serif; }
 button,input { font:inherit; }
 button { color:inherit; }
+.center-screen { min-height:100vh; display:grid; place-items:center; padding:24px; }
+.auth-card { width:min(100%,440px); padding:30px; border:1px solid #eee7dc; border-radius:28px; background:var(--card); box-shadow:0 18px 55px #5a49331a; }
+.auth-card h1 { margin-bottom:12px; }
+.auth-card p { color:var(--muted); line-height:1.55; }
+.auth-icon { display:grid; place-items:center; width:54px; height:54px; margin-bottom:20px; border-radius:18px; background:#eff2e9; font-size:1.5rem; }
+.auth-card form { display:flex; flex-direction:column; gap:10px; margin-top:24px; }
+.auth-card label { font-size:.8rem; font-weight:800; }
+.auth-card input { width:100%; padding:14px; border:1px solid #d8d0c5; border-radius:13px; background:white; outline:none; }
+.auth-card input:focus { border-color:var(--sage); box-shadow:0 0 0 3px #738b7225; }
+.primary-action { border:0; border-radius:13px; padding:14px 18px; color:white; background:var(--sage-dark); font-weight:800; cursor:pointer; }
+.primary-action:disabled,.template-card:disabled { opacity:.6; cursor:wait; }
+.alert { padding:12px 14px; border-radius:13px; color:#765647; background:#fff0e8; font-size:.85rem; }
+.empty-state { text-align:center; }
+.empty-state > span { font-size:2rem; }
+.empty-state h2 { margin:10px 0 6px; font-family:Georgia,serif; }
+.empty-state p { color:var(--muted); }
+.empty-state .primary-action { margin-top:8px; }
+code { padding:2px 5px; border-radius:5px; background:#eee9df; font-size:.85em; }
 .app-shell { min-height:100vh; width:min(100%,680px); margin:0 auto; padding:34px 20px 28px; position:relative; }
 .topbar { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }
 .eyebrow,.room-label { margin:0 0 6px; color:var(--sage-dark); font-size:.73rem; font-weight:800; letter-spacing:.09em; text-transform:uppercase; }
