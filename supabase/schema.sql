@@ -8,6 +8,7 @@ create table if not exists public.tasks (
   category text not null default 'Hemmet',
   estimated_minutes integer check (estimated_minutes is null or estimated_minutes >= 0),
   completed boolean not null default false,
+  archived boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
