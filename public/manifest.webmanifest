@@ -1,0 +1,10 @@
+{
+  "name": "Emels Tasks",
+  "short_name": "Emels",
+  "description": "Små steg för hemmet, jobbet och allt däremellan.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8f4ec",
+  "theme_color": "#738b72",
+  "lang": "sv"
+}
