@@ -53,6 +53,7 @@ export default function Home() {
   const [completionMessage, setCompletionMessage] = useState<string | null>(null);
   const [routineCompletionMessage, setRoutineCompletionMessage] = useState<string | null>(null);
   const [routineCompleted, setRoutineCompleted] = useState<Set<string>>(new Set());
+  const [currentDay, setCurrentDay] = useState(todayKey);
   const [tab, setTab] = useState<"routines" | "today" | "library">("routines");
   const [busy, setBusy] = useState(false);
 
@@ -72,10 +73,10 @@ export default function Home() {
 
   const loadRoutineCompletions = useCallback(async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from("routine_completions").select("item_id").eq("completed_on", todayKey());
+    const { data, error } = await supabase.from("routine_completions").select("item_id").eq("completed_on", currentDay);
     if (error) setMessage(error.message);
     else setRoutineCompleted(new Set((data ?? []).map((item) => item.item_id as string)));
-  }, []);
+  }, [currentDay]);
 
   useEffect(() => {
     if (!supabase) { setAuthReady(true); return; }
@@ -87,6 +88,12 @@ export default function Home() {
     if (user) { void loadTasks(); void loadRoutineCompletions(); }
     else { setTasks([]); setRoutineCompleted(new Set()); }
   }, [user, loadTasks, loadRoutineCompletions]);
+  useEffect(() => {
+    const refreshDay = () => setCurrentDay(todayKey());
+    const interval = window.setInterval(refreshDay, 60_000);
+    document.addEventListener("visibilitychange", refreshDay);
+    return () => { window.clearInterval(interval); document.removeEventListener("visibilitychange", refreshDay); };
+  }, []);
 
   const task = tasks.find((item) => item.id === selectedTaskId) ?? null;
   const template = templates.find((item) => item.id === task?.template_id);
@@ -123,8 +130,8 @@ export default function Home() {
       return next;
     });
     const { error } = wasCompleted
-      ? await supabase.from("routine_completions").delete().eq("user_id", user.id).eq("item_id", itemId).eq("completed_on", todayKey())
-      : await supabase.from("routine_completions").upsert({ user_id: user.id, item_id: itemId, completed_on: todayKey() });
+      ? await supabase.from("routine_completions").delete().eq("user_id", user.id).eq("item_id", itemId).eq("completed_on", currentDay)
+      : await supabase.from("routine_completions").upsert({ user_id: user.id, item_id: itemId, completed_on: currentDay });
     if (error) { setMessage(error.message); await loadRoutineCompletions(); }
     else if (completesRoutine) setRoutineCompletionMessage(compliments[Math.floor(Math.random() * compliments.length)]);
   }
@@ -133,7 +140,7 @@ export default function Home() {
     if (!supabase || !user) return;
     setBusy(true); setMessage("");
     const itemIds = routine.steps.map((step) => step.id);
-    const { error } = await supabase.from("routine_completions").delete().eq("user_id", user.id).eq("completed_on", todayKey()).in("item_id", itemIds);
+    const { error } = await supabase.from("routine_completions").delete().eq("user_id", user.id).eq("completed_on", currentDay).in("item_id", itemIds);
     if (error) setMessage(error.message);
     else {
       setRoutineCompleted((current) => {
