@@ -7,6 +7,7 @@ import { isSupabaseConfigured, supabase } from "../lib/supabase";
 type Template = { id: string; title: string; room: string; minutes: number; icon: string; steps: string[] };
 type Subtask = { id: string; title: string; position: number; completed: boolean };
 type Task = { id: string; template_id: string | null; title: string; category: string; estimated_minutes: number | null; completed: boolean; subtasks: Subtask[] };
+type Routine = { id: string; title: string; icon: string; subtitle: string; steps: { id: string; title: string }[] };
 
 const templates: Template[] = [
   { id: "kitchen", title: "Städa köket", room: "Kök", minutes: 25, icon: "🍋", steps: ["Plocka undan", "Fyll diskmaskinen", "Torka bänkarna", "Rengör spisen", "Torka diskhon", "Dammsug golvet"] },
@@ -23,6 +24,24 @@ const compliments = [
   "Fantastiskt jobbat! Ett steg i taget fungerade.",
 ];
 
+const routines: Routine[] = [
+  { id: "morning", title: "Morgonrutin", icon: "☀️", subtitle: "En lugn start på dagen", steps: [
+    { id: "morning-breakfast", title: "Ställ in frukost i kylen" },
+    { id: "morning-teeth", title: "Borsta tänderna" },
+    { id: "morning-bag", title: "Packa jobbväskan" },
+  ] },
+  { id: "evening", title: "Kvällsrutin", icon: "🌙", subtitle: "Gör morgondagen lite enklare", steps: [
+    { id: "evening-clothes", title: "Lägg fram kläder till imorgon" },
+    { id: "evening-teeth", title: "Borsta tänderna" },
+    { id: "evening-alarm", title: "Ställ alarmet" },
+  ] },
+];
+
+function todayKey() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -32,7 +51,9 @@ export default function Home() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [completionMessage, setCompletionMessage] = useState<string | null>(null);
-  const [tab, setTab] = useState<"today" | "library">("today");
+  const [routineCompletionMessage, setRoutineCompletionMessage] = useState<string | null>(null);
+  const [routineCompleted, setRoutineCompleted] = useState<Set<string>>(new Set());
+  const [tab, setTab] = useState<"routines" | "today" | "library">("routines");
   const [busy, setBusy] = useState(false);
 
   const loadTasks = useCallback(async () => {
@@ -49,19 +70,30 @@ export default function Home() {
     }
   }, []);
 
+  const loadRoutineCompletions = useCallback(async () => {
+    if (!supabase) return;
+    const { data, error } = await supabase.from("routine_completions").select("item_id").eq("completed_on", todayKey());
+    if (error) setMessage(error.message);
+    else setRoutineCompleted(new Set((data ?? []).map((item) => item.item_id as string)));
+  }, []);
+
   useEffect(() => {
     if (!supabase) { setAuthReady(true); return; }
     supabase.auth.getSession().then(({ data }) => { setUser(data.session?.user ?? null); setAuthReady(true); });
     const { data } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null));
     return () => data.subscription.unsubscribe();
   }, []);
-  useEffect(() => { if (user) void loadTasks(); else setTasks([]); }, [user, loadTasks]);
+  useEffect(() => {
+    if (user) { void loadTasks(); void loadRoutineCompletions(); }
+    else { setTasks([]); setRoutineCompleted(new Set()); }
+  }, [user, loadTasks, loadRoutineCompletions]);
 
   const task = tasks.find((item) => item.id === selectedTaskId) ?? null;
   const template = templates.find((item) => item.id === task?.template_id);
   const completedCount = task?.subtasks.filter((step) => step.completed).length ?? 0;
   const progress = task?.subtasks.length ? Math.round((completedCount / task.subtasks.length) * 100) : 0;
   const nextStep = useMemo(() => task?.subtasks.find((step) => !step.completed), [task]);
+  const activeRoutines = routines.filter((routine) => !routine.steps.every((step) => routineCompleted.has(step.id)));
 
   async function sendMagicLink(event: React.FormEvent) {
     event.preventDefault(); if (!supabase) return;
@@ -78,6 +110,40 @@ export default function Home() {
     const { error: stepError } = await supabase.from("subtasks").insert(selected.steps.map((title, position) => ({ task_id: created.id, user_id: user.id, title, position })));
     if (stepError) setMessage(stepError.message);
     await loadTasks(); setSelectedTaskId(created.id); setTab("today"); setBusy(false);
+  }
+
+  async function toggleRoutineStep(itemId: string) {
+    if (!supabase || !user) return;
+    const wasCompleted = routineCompleted.has(itemId);
+    const selectedRoutine = routines.find((routine) => routine.steps.some((step) => step.id === itemId));
+    const completesRoutine = !wasCompleted && selectedRoutine?.steps.every((step) => step.id === itemId || routineCompleted.has(step.id));
+    setRoutineCompleted((current) => {
+      const next = new Set(current);
+      if (wasCompleted) next.delete(itemId); else next.add(itemId);
+      return next;
+    });
+    const { error } = wasCompleted
+      ? await supabase.from("routine_completions").delete().eq("user_id", user.id).eq("item_id", itemId).eq("completed_on", todayKey())
+      : await supabase.from("routine_completions").upsert({ user_id: user.id, item_id: itemId, completed_on: todayKey() });
+    if (error) { setMessage(error.message); await loadRoutineCompletions(); }
+    else if (completesRoutine) setRoutineCompletionMessage(compliments[Math.floor(Math.random() * compliments.length)]);
+  }
+
+  async function restoreRoutine(routine: Routine) {
+    if (!supabase || !user) return;
+    setBusy(true); setMessage("");
+    const itemIds = routine.steps.map((step) => step.id);
+    const { error } = await supabase.from("routine_completions").delete().eq("user_id", user.id).eq("completed_on", todayKey()).in("item_id", itemIds);
+    if (error) setMessage(error.message);
+    else {
+      setRoutineCompleted((current) => {
+        const next = new Set(current);
+        itemIds.forEach((itemId) => next.delete(itemId));
+        return next;
+      });
+      setTab("routines");
+    }
+    setBusy(false);
   }
 
   async function toggleStep(step: Subtask) {
@@ -107,9 +173,23 @@ export default function Home() {
 
   return <main className="app-shell">
     <header className="topbar"><div><p className="eyebrow">Din lugna tasklista</p><h1>Hej Emelie <span aria-hidden="true">👋</span></h1><p className="intro">Ett litet steg i taget räcker.</p></div><button className="avatar" aria-label="Logga ut" title="Logga ut" onClick={() => supabase?.auth.signOut()}>E</button></header>
-    <nav className="tabs" aria-label="Huvudmeny"><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Aktuella tasks</button><button className={tab === "library" ? "active" : ""} onClick={() => setTab("library")}>Städbibliotek</button></nav>
+    <nav className="tabs" aria-label="Huvudmeny"><button className={tab === "routines" ? "active" : ""} onClick={() => setTab("routines")}>Rutiner</button><button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Aktuella tasks</button><button className={tab === "library" ? "active" : ""} onClick={() => setTab("library")}>Bibliotek</button></nav>
     {message && <p className="alert" role="status">{message}</p>}
-    {tab === "today" ? <section className="content" aria-label="Aktuella uppgifter">
+    {tab === "routines" ? <section className="content routine-list" aria-label="Dagens rutiner">
+      <div className="section-heading routine-heading"><div><p className="eyebrow">Idag</p><h2>Dina rutiner</h2></div><span>Ett steg i taget</span></div>
+      {activeRoutines.length === 0 ? <div className="focus-card routines-complete"><span aria-hidden="true">✨</span><h2>Bra jobbat!</h2><p>Alla dagens rutiner är klara. Nu får du känna dig nöjd.</p></div> : activeRoutines.map((routine) => {
+        const done = routine.steps.filter((step) => routineCompleted.has(step.id)).length;
+        const routineProgress = Math.round((done / routine.steps.length) * 100);
+        return <article className="routine-card" key={routine.id}>
+          <div className="routine-card-heading"><span className="routine-icon" aria-hidden="true">{routine.icon}</span><div><h2>{routine.title}</h2><p>{routine.subtitle}</p></div><strong>{done}/{routine.steps.length}</strong></div>
+          <div className="progress-track" aria-label={`${routineProgress} procent klart`}><span style={{ width: `${routineProgress}%` }} /></div>
+          <div className="step-list">{routine.steps.map((step) => {
+            const completed = routineCompleted.has(step.id);
+            return <label className={completed ? "step done" : "step"} key={step.id}><input type="checkbox" checked={completed} onChange={() => toggleRoutineStep(step.id)} /><span className="checkmark" aria-hidden="true">{completed ? "✓" : ""}</span><span>{step.title}</span></label>;
+          })}</div>
+        </article>;
+      })}
+    </section> : tab === "today" ? <section className="content" aria-label="Aktuella uppgifter">
       {tasks.length > 1 && <section className="task-overview" aria-label="Välj aktuell task"><h2>Dina aktuella tasks</h2><div className="task-switcher">{tasks.map((item) => {
         const itemTemplate = templates.find((candidate) => candidate.id === item.template_id);
         const itemDone = item.subtasks.filter((step) => step.completed).length;
@@ -122,14 +202,20 @@ export default function Home() {
         <div className="step-list">{task.subtasks.map((step) => <label className={step.completed ? "step done" : "step"} key={step.id}><input type="checkbox" checked={step.completed} onChange={() => toggleStep(step)} /><span className="checkmark" aria-hidden="true">{step.completed ? "✓" : ""}</span><span>{step.title}</span></label>)}</div>
       </div><button className="archive-action" onClick={() => setConfirmArchive(true)}><span aria-hidden="true">✓</span> Avsluta task</button></>}
       <button className="secondary-action" onClick={() => setTab("library")}><span aria-hidden="true">＋</span> Lägg till ny städuppgift</button>
-    </section> : <section className="content library" aria-label="Städbibliotek">
-      <div className="section-heading"><div><p className="eyebrow">Färdiga mallar</p><h2>Vad vill du ta tag i?</h2></div><span>{templates.length} val</span></div>
+    </section> : <section className="content library" aria-label="Bibliotek">
+      <div className="section-heading"><div><p className="eyebrow">Dagens rutiner</p><h2>Lägg tillbaka en rutin</h2></div></div>
+      <div className="routine-library">{routines.map((routine) => {
+        const completed = routine.steps.every((step) => routineCompleted.has(step.id));
+        return <button className="template-card" disabled={busy || !completed} key={routine.id} onClick={() => restoreRoutine(routine)}><span className="template-icon" aria-hidden="true">{routine.icon}</span><span className="template-copy"><strong>{routine.title}</strong><small>{completed ? "Klar idag · lägg tillbaka" : "Finns redan bland dagens rutiner"}</small></span><span className="arrow" aria-hidden="true">{completed ? "＋" : "✓"}</span></button>;
+      })}</div>
+      <div className="section-heading library-section-heading"><div><p className="eyebrow">Städuppgifter</p><h2>Vad vill du ta tag i?</h2></div><span>{templates.length} val</span></div>
       <div className="template-grid">{templates.map((item) => <button disabled={busy} className="template-card" key={item.id} onClick={() => createFromTemplate(item)}><span className="template-icon" aria-hidden="true">{item.icon}</span><span className="template-copy"><strong>{item.title}</strong><small>{item.steps.length} små steg · {item.minutes} min</small></span><span className="arrow" aria-hidden="true">›</span></button>)}</div>
-      <p className="library-note">Mallarna ligger direkt i appen. Dina val och framsteg sparas i Supabase.</p>
+      <p className="library-note">Rutiner och städmallar ligger direkt i appen. Dina val och framsteg sparas i Supabase.</p>
     </section>}
     <footer className="bottom-note"><span className="status-dot" /> Synkroniserad med Supabase</footer>
     {confirmArchive && task && <div className="modal-backdrop" role="presentation" onMouseDown={() => setConfirmArchive(false)}><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onMouseDown={(event) => event.stopPropagation()}><span className="modal-icon">🍃</span><h2 id="confirm-title">Avsluta tasken?</h2><p>Är du säker på att du vill ta bort <strong>{task.title}</strong> från dina aktuella tasks?</p><div className="modal-actions"><button className="modal-cancel" onClick={() => setConfirmArchive(false)}>Nej, behåll</button><button className="modal-confirm" disabled={busy} onClick={archiveTask}>{busy ? "Avslutar…" : "Ja, avsluta"}</button></div></section></div>}
     {completionMessage && <div className="modal-backdrop" role="presentation"><section className="confirm-modal celebration-modal" role="dialog" aria-modal="true" aria-labelledby="completion-title"><span className="modal-icon">✨</span><h2 id="completion-title">Tasken är klar!</h2><p>{completionMessage}</p><button className="primary-action modal-next" disabled={busy} onClick={archiveTask}>{busy ? "Sparar…" : "Gå vidare"}</button></section></div>}
+    {routineCompletionMessage && <div className="modal-backdrop" role="presentation"><section className="confirm-modal celebration-modal" role="dialog" aria-modal="true" aria-labelledby="routine-completion-title"><span className="modal-icon">✨</span><h2 id="routine-completion-title">Rutinen är klar!</h2><p>{routineCompletionMessage}</p><button className="primary-action modal-next" onClick={() => setRoutineCompletionMessage(null)}>Gå vidare</button></section></div>}
   </main>;
 }
 
